@@ -1,0 +1,337 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <math.h>
+#include <string.h>
+#include <algorithm>
+
+using namespace std;
+
+//蚂蚁坐标的结构体
+typedef struct Point{
+	int x;
+	int y;
+	Point(int a, int b)
+	{
+		x = a;
+		y = b;
+	}
+	Point()//起点坐标
+	{
+		x = 0;
+		y = 2;
+	}
+}Point;
+
+const int antnum = 2;
+bool ant_state[antnum];
+int ant_taketime[antnum] = { 0 };				//每只蚂蚁目前花费的时间
+Point lastcross[antnum];
+bool hash_round = false;
+int iscross = 0;
+bool chooseway[4] = { false };
+int secondway = 0;
+Point path[antnum][100];	//路径结点坐标
+int cou = 0;
+
+const int delta = 1;							//信号素增量
+const int park_time[4] = { 10, 20, 30, 40 };	//不同模式倒车时间
+
+
+//构建停车场各位置状态表，0代表道路，1代表可用车位，3代表障碍物
+int state[16][23] = {
+	3, 3, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+	3, 3, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3,
+	3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3,
+	3, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 3,
+	3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3,
+	3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3,
+	3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3,
+	3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3,
+	3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3,
+	3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3,
+	3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3,
+	3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3,
+	3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3, 3, 3, 1, 0, 1, 3,
+	3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3,
+	3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3,
+	3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+};
+
+//建立禁忌表，初始化在main函数中用memset完成
+bool hash_allowed[16][23][antnum];
+
+//生成1-100的随机数
+int creatrand()
+{
+	return (int)(round(1.0*rand() / RAND_MAX * 100));
+}
+
+//蚂蚁依照概率移动到下一位置,并调整禁忌表
+void next_point(int signal[16][23], Point *p, bool round[], int P_round[], int antnum)
+{
+	int add_up = 0;	//概率的分母
+	int i = 0;
+	int biggest = 0;
+
+	hash_round = false;
+	iscross = 0;
+	//printf("antnum:%d,x=%d,y=%d\n", antnum, p->x, p->y);
+	//寻找四周可以去的地方
+	if (state[p->x - 1][p->y] == 0 && hash_allowed[p->x - 1][p->y][antnum] == true)
+	{
+		add_up += signal[p->x - 1][p->y];
+		round[0] = true;
+		hash_round = true;
+		iscross++;
+	}
+	if (state[p->x + 1][p->y] == 0 && hash_allowed[p->x + 1][p->y][antnum] == true)
+	{
+		add_up += signal[p->x + 1][p->y];
+		round[1] = true;
+		hash_round = true;
+		iscross++;
+	}
+	if (state[p->x][p->y - 1] == 0 && hash_allowed[p->x][p->y - 1][antnum] == true)
+	{
+		add_up += signal[p->x][p->y - 1];
+		round[2] = true;
+		hash_round = true;
+		iscross++;
+	}
+	if (state[p->x][p->y + 1] == 0 && hash_allowed[p->x][p->y + 1][antnum] == true)
+	{
+		add_up += signal[p->x][p->y + 1];
+		round[3] = true;
+		hash_round = true;
+		iscross++;
+	}
+	
+	if (hash_round == false)//无处可去
+	{
+		switch (secondway)
+		{
+		case 0:p->x--; break;
+		case 1:p->x++; break;
+		case 2:p->y--; break;
+		case 3:p->y++; break;
+		default:printf("secondway choose error!\n");
+		}
+		return;
+	}
+
+	/*printf("add_up:%d\n", add_up);
+	for (int i = 0; i < 4; i++)
+	{
+		printf("round[%d]=%d\n", i, round[i]);
+	}*/
+	//system("pause");
+
+	for (i = 0; i < 4; i++)
+	{
+		if (round[i] == true)//只求可达点的概率，不可达点不计算就为初始值0
+		{
+			switch (i)
+			{
+			case 0: P_round[0] = signal[p->x - 1][p->y] * 100 / add_up; break;
+			case 1: P_round[1] = signal[p->x + 1][p->y] * 100 / add_up; break;
+			case 2: P_round[2] = signal[p->x][p->y - 1] * 100 / add_up; break;
+			case 3: P_round[3] = signal[p->x][p->y + 1] * 100 / add_up; break;
+			default:printf("round[i] choose error!\n");
+			}
+		}
+	}
+	/*for (int i = 0; i < 4; i++)
+	{
+		printf("P_round[%d]=%d\n", i, P_round[i]);
+	}*/
+	int temp = creatrand();
+	hash_allowed[p->x][p->y][antnum] = false;
+	if (temp >= 0 && temp < P_round[0])
+	{	//走上
+		p->x--;
+		chooseway[0] = true;
+		//printf("(%d,%d)->(%d,%d)\n", p->x + 1, p->y, p->x, p->y);
+	}
+	else if (temp >= P_round[0] && temp < P_round[0] + P_round[1])
+	{	//走下
+		p->x++;
+		chooseway[1] = true;
+		//printf("(%d,%d)->(%d,%d)\n", p->x - 1, p->y, p->x, p->y);
+	}
+	else if (temp >= (P_round[0] + P_round[1]) && temp < (P_round[0] + P_round[1] + P_round[2]))
+	{	//走左
+		p->y--;
+		chooseway[2] = true;
+		//printf("(%d,%d)->(%d,%d)\n", p->x, p->y + 1, p->x, p->y);
+	}
+	else if (temp >= (P_round[0] + P_round[1] + P_round[2]) && temp <= 100)//注意四方均为0，但本问题不会出现这种情况
+	{	//走右
+		p->y++;
+		chooseway[3] = true;
+		//printf("(%d,%d)->(%d,%d)\n", p->x + 1, p->y - 1, p->x, p->y);
+	}
+	signal[p->x][p->y] += delta;
+	//path[antnum][cou++] = *p;
+	if (iscross >= 2)//记录交叉点
+	{
+		lastcross[antnum].x = p->x;
+		lastcross[antnum].y = p->y;
+		for (i = 0; i < 4; i++)			//将最大值清零
+		{
+			if (chooseway[i] == true)
+			{
+				P_round[i] = 0;
+			}
+		}
+		for (i = 0; i < 4; i++)			//求处次大值，并将方向求处
+		{
+			if (P_round[i] > temp)
+			{
+				biggest = P_round[i];
+				secondway = i;
+			}
+		}
+	}
+}
+
+//从起点出发的终点
+bool find_end(Point *p, Point end)
+{
+	if ((p->x - 1) == end.x && (p->y) == end.y
+		|| (p->x + 1) == end.x && (p->y) == end.y
+		|| (p->x) == end.x && (p->y - 1) == end.y
+		|| (p->x) == end.x && (p->y + 1) == end.y)
+	{
+		//printf("找到终点了\n");
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+//返回时的终点——起点
+bool find_start(Point *p, Point start)
+{
+	if ((p->x - 1) == start.x && (p->y) == start.y
+		|| (p->x + 1) == start.x && (p->y) == start.y
+		|| (p->x) == start.x && (p->y - 1) == start.y
+		|| (p->x) == start.x && (p->y + 1) == start.y)
+	{
+		//printf("找到起点了\n");
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+int main()
+{
+	srand((unsigned)time(NULL));
+
+	int t = 0,
+		Nc = 0,
+		Ncmax = 0,
+		signal[16][23],
+		m = 0,
+		alpha = 0.9,
+		beta = 1.5,
+		rou = 0.2,
+		Q = 1;
+
+	int i, j, k;
+
+	memset(ant_state, true, sizeof(ant_state));
+	memset(hash_allowed, 1, sizeof(hash_allowed));//给hash_allowed全部设为true
+	fill(signal[0], signal[0] + 16 * 23, 1);	//初始signal全部设为1
+		
+	int shorest_parking_time = 100000;
+
+	bool round[4] = { false };	//上下左右--0、1、2、3，蚂蚁可以选择的方向
+	int P_round[4] = { 0 };		//存放每一步蚂蚁走各位置概率
+
+	Point ants[antnum];			//初始化在入（出）口
+	Point start(0, 2);
+	Point end;
+
+	printf("输入走的时间:\n");
+	scanf("%d", &Ncmax);
+
+		printf("输入目的坐标 x y:\n");
+		scanf("%d %d", &end.x, &end.y);
+
+		for (Nc = 0; Nc < Ncmax; Nc++)
+		{
+			for (i = 0; i < antnum; i++)
+			{
+				memset(round, 0, sizeof(round));
+				memset(P_round, 0, sizeof(P_round));
+				/*for (int xx = 0; xx < antnum; xx++)
+				{
+					printf("ant_state[%d]=%d\n", xx, ant_state[xx]);
+				}*/
+				if (ant_state[i] == true)		//蚂蚁从起点前往终点
+				{
+					if(find_end(ants + i, end))//如果直连处为终点
+					{
+						ant_state[i] = false;
+						//printf("将ant_state[%d]设为false.\n", i);
+						if (ant_taketime[i] < shorest_parking_time)
+						{
+							shorest_parking_time = ant_taketime[i];
+						}
+						ant_taketime[i] = 0;
+						for (k = 0; k < 17; k++)
+						{
+							for (j = 0; j < 24; j++)
+							{
+								hash_allowed[k][j][i] = true;
+							}
+						}
+						/*for (j = 0; j <= cou; j++)
+						{
+							printf("(%d,%d)->", ants[antnum].x, ants[antnum].y);
+						}
+						printf("END\n");*/
+						continue;
+					}
+					next_point(signal, ants + i, round, P_round, i);
+					ant_taketime[i]++;
+					//printf("ant_taketime[%d]=%d\n", i, ant_taketime[i]);
+
+				}
+				else if (ant_state[i] == false)//蚂蚁从终点回起点
+				{
+					if (find_start(ants + i, start))//如果直连处为终点
+					{
+						ant_state[i] = true;
+						//printf("将ant_state[%d]设为true.\n", i);
+						if (ant_taketime[i] < shorest_parking_time)
+						{
+							shorest_parking_time = ant_taketime[i];
+						}
+						ant_taketime[i] = 1;		//往回走时，不进入起点，直接加1并回头
+						for (k = 0; k < 17; k++)
+						{
+							for (j = 0; j < 24; j++)
+							{
+								hash_allowed[k][j][i] = true;
+							}
+						}
+						continue;
+					}
+					next_point(signal, ants + i, round, P_round, i);
+					ant_taketime[i]++;
+				}
+			}
+			
+		}
+		printf("shorest_parking_time:%d\n", shorest_parking_time);
+
+	system("pause");
+	return 0;
+} 
